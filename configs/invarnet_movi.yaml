@@ -1,0 +1,39 @@
+exp_path: '/mnt/fs5/chpatel/test/test'
+seed: 62
+data:
+  dataset_class: movi
+  data_dir: /ccn2/u/chpatel/kubric_data/
+  subset: 'movi_a'
+  skip: 1
+  spacing: 0.1
+  f1_radius: 0.6
+  graph_type: invarnet
+  particle_type: rt_same_spacing
+  add_density: False
+  old_movi_setting: False
+train:
+  batch_size : 1
+  viz_after: 5000
+  save_after: 5000
+  log_after: 1000
+  val_after: 1
+  lr : 1.e-4
+  weight_decay: 0.
+  lr_scheduler: 'plateau'
+  num_epochs : 10000
+  accu_grad_batches: 2
+  only_validate: False
+eval:
+  split: 'test'
+  viz: False
+  outdir_prefix: 'viz'
+model:
+  model_name: invarnet
+  ckpt_path: ''
+  node_feat_dim: 7
+  rel_feat_dim: 8
+  hidden_dim: 128
+  mp_rel_idx: [0, 0, 0, 1, 2, 3, 0, 0, 0]
+  num_mp_blocks: 1
+  effect_normalization: none
+  inp_normalization: none
