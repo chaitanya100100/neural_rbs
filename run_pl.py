@@ -48,7 +48,7 @@ def main():
         default_root_dir=cfg['exp_path'],
         logger=logger,
         devices=1,
-        accelerator='gpu',
+        # accelerator='gpu',
         strategy=None,
         # plugins=DDPPlugin(find_unused_parameters=False),
         num_sanity_val_steps=2,

@@ -75,12 +75,9 @@ class InvarNet(nn.Module):
                 relidx = (rel_stages == mpri)  # size R, total number of True is r
                 ridx, sidx = rels[relidx, 0], rels[relidx, 1]  # size r, r
 
-                rli_ltn = self.rel_processors[idx](torch.cat([rel_latents[relidx], node_latents[ridx], node_latents[sidx]], 1))  # r
-                if self.effect_normalization != 'none':
-                    rli_ltn = self.rel_processor_norm[idx](rli_ltn)
-                new_rel_latents = torch_scatter.scatter(rli_ltn, torch.where(relidx)[0], dim=0, dim_size=num_rels)  # R
-
-                agg_new_rel_latents = torch_scatter.scatter_add(rli_ltn, ridx, dim=0, dim_size=num_nodes)  # N
+                idx_list = idx, relidx, ridx, sidx
+                new_rel_latents, rli_ltn = self.message(idx_list, rel_latents, node_latents, num_rels)
+                agg_new_rel_latents = self.aggregate(rli_ltn, ridx, num_nodes)
                 new_node_latents = self.node_processors[idx](torch.cat([node_latents, agg_new_rel_latents], 1))  # N
                 if self.effect_normalization != 'none':
                     new_node_latents = self.node_processor_norm[idx](new_node_latents)
@@ -90,4 +87,20 @@ class InvarNet(nn.Module):
 
         out = self.node_dec(node_latents)
         return out
+    
+    def message(self, idx_list, rel_latents, node_latents, num_rels):
+
+        idx, relidx, ridx, sidx = idx_list
+        rli_ltn = self.rel_processors[idx](torch.cat([rel_latents[relidx], node_latents[ridx], node_latents[sidx]], 1))  # r
+        
+        if self.effect_normalization != 'none':
+            rli_ltn = self.rel_processor_norm[idx](rli_ltn)
+        new_rel_latents = torch_scatter.scatter(rli_ltn, torch.where(relidx)[0], dim=0, dim_size=num_rels)  # R
+        
+        return new_rel_latents, rli_ltn
+        
+
+    def aggregate(self, rli_ltn, ridx, num_nodes):
+        agg_new_rel_latents = torch_scatter.scatter_add(rli_ltn, ridx, dim=0, dim_size=num_nodes)  # N
+        return agg_new_rel_latents
 
