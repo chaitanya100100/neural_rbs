@@ -1,3 +1,9 @@
+# Demo command
+python run_pl.py --config configs/invarnet_movi.yaml --train-only_validate True
+
+To train for 1 small epoch:
+python run_pl.py --config configs/invarnet_movi.yaml --train-num_epochs 1
+
 
 ## Setup
 - Create a new python environment.

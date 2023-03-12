@@ -1,8 +1,8 @@
-exp_path: '/mnt/fs5/chpatel/test/test'
+exp_path: './data/test'
 seed: 62
 data:
   dataset_class: movi
-  data_dir: /ccn2/u/chpatel/kubric_data/
+  data_dir: ./data/kubric_data_dummy/
   subset: 'movi_a'
   skip: 1
   spacing: 0.1
