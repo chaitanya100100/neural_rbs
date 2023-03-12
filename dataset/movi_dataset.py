@@ -11,7 +11,7 @@ import h5py
 from functools import partial
 import cv2
 
-from dataset.particle_data_utils import get_particle_poses_and_vels, add_noise, careful_revoxelized, transform_points, get_transformation_matrix
+from dataset.particle_data_utils import careful_revoxelized, transform_points, get_transformation_matrix
 from dataset.data_utils import store_hdf5_data, nested_shallow_dict, process_movi_tfds_example, recursive_to_tensor
 
 from dataset.particle_graph import InvarNetGraph
@@ -29,6 +29,7 @@ ZUP_TO_YUP = [
 
 
 def calculate_base_masses(asset_dir):
+    """Some version of kubric didn't have masses of object in the data sample. so we have to fetch it from urdf file."""
     def get_mass(xml_file):
         tree = ET.parse(xml_file)
         root = tree.getroot()
@@ -43,6 +44,9 @@ def calculate_base_masses(asset_dir):
 
 
 def save_kubric_assets():
+    """Process kubric stock objects and save relevant data.
+    For each object, we have its obj file. We save its voxelized format which is useful to get volume particles later.
+    """
     if 'DISPLAY' not in os.environ:
         os.environ['DISPLAY'] = ':10'
     parser = argparse.ArgumentParser()
@@ -62,11 +66,10 @@ def save_kubric_assets():
             # fine_mesh = obj_mesh.subdivide_loop(1)
             # fine_mesh = obj_mesh.simplify_quadratic_decimation(obj_mesh.faces.shape[0])
 
-            pts, _ = trimesh.sample.sample_surface_even(obj_mesh, 500)
-            # pts = np.concatenate([pts, obj_mesh.vertices.view(np.ndarray)], 0)
-            with open(surface_path, 'w') as f:
-                f.write(trimesh.exchange.export.export_obj(trimesh.Trimesh(vertices=pts)))
-            continue
+            # pts, _ = trimesh.sample.sample_surface_even(obj_mesh, 500)
+            # # pts = np.concatenate([pts, obj_mesh.vertices.view(np.ndarray)], 0)
+            # with open(surface_path, 'w') as f:
+            #     f.write(trimesh.exchange.export.export_obj(trimesh.Trimesh(vertices=pts)))
 
             kwargs = {'use_offscreen_pbuffer': False, 'dilated_carving': True, 'wireframe':True, 'dimension': args.vox_dim}
             vox = obj_mesh.voxelized(pitch=None, method='binvox', **kwargs)
@@ -93,6 +96,7 @@ def download_movi_dataset():
 
 
 def get_assets(asset_dir):
+    """Returns a dict containing mesh and voxels for each canonical shape."""
     obj_meshes = {}
     for shape_label, shape_name in enumerate(KUBASIC_OBJECTS):
         ms = trimesh.load_mesh(os.path.join(asset_dir, shape_name, 'collision_geometry.obj'))
@@ -142,21 +146,21 @@ def load_seq_data(data_path, skip_frame=None, randomize_skipping=False):
         dct['cam_pos'] = np.array(ZUP_TO_YUP)[:3,:3] @ dct['cam_pos']
     
         # add scale properly
-        if 'scale' in h5['instances']:
+        if 'scale' in h5['instances']:  # in MOVi-b
             scale = h5['instances/scale'][()]
-        elif 'size_label' in h5['instances']:
+        elif 'size_label' in h5['instances']:  # in MOVi-a
             size_label = h5['instances/size_label'][()]
             scale = np.where(size_label.astype(bool), np.ones(size_label.shape[0]) * 1.4, np.ones(size_label.shape[0]) * 0.7)
-        else:
+        else:  # in older versions of the datasets where scale was not explicitly given
             scale = get_scale(h5['instances/shape_label'][()], h5['instances/material_label'][()], h5['instances/mass'][()])
-        dct['scale'] = np.tile(scale[:, None], [1, 3])
+        dct['scale'] = np.tile(scale[:, None], [1, 3])  # Ox3
         dct['transform'] = get_transformation_matrix(dct['rot'], dct['trans'])
     
     dct.update({
         'time_step': dct['rot'].shape[0],
         'filename': data_path,
         'seq_name': os.path.basename(data_path).replace('.hdf5', ''),
-        'start_frame': 0, 'yellow_id': 0, 'red_id': 0, 'label': 0,
+        'yellow_id': 0, 'red_id': 0, 'label': 0,
     })
     return dct
 
@@ -170,7 +174,7 @@ class MOViDataset(Dataset):
         assert self.subset in ['movi_a', 'movi_b']
         self.split = data_config['split']
         assert self.split in ['train', 'val']
-        self.noise = 3.e-4 if data_config['split'] == 'train' else 0
+        self.noise = 3.e-4 if data_config['split'] == 'train' else None
         print("Adding noise: ", self.noise)
         self.assets = get_assets(os.path.join(data_config['data_dir'], 'assets'))
 
@@ -184,7 +188,7 @@ class MOViDataset(Dataset):
         self.avg_frames_per_seq = 24 // self.skip
         print("Particle type: {} | Graph type: {} | Spacing: {:.4f}".format(self.particle_type, self.graph_type, self.spacing))
 
-        self.val_rollout = True #and self.particle_type != 'rt_imp_sampling'
+        self.val_rollout = data_config['val_rollout']
         self.graph_builder = InvarNetGraph(data_config, self.assets)
 
     def __len__(self):
@@ -199,47 +203,29 @@ class MOViDataset(Dataset):
         filename = self.all_hdf5[seq_idx]
         seq_data = load_seq_data(filename, skip_frame=self.skip, randomize_skipping=(fr_idxs == 'random3'))
         if fr_idxs == 'random3':
-            fidx = np.random.randint(seq_data['start_frame'], seq_data['time_step']-3)  # exclude initial frames with external stimuli
-            stf, enf, focf = fidx, fidx+3, fidx+1
+            fidx = np.random.randint(0, seq_data['time_step']-3)  # exclude initial frames with external stimuli
         elif fr_idxs == 'all':
-            stf, enf, focf = None, None, 1
-        seq_data['cur_transform'] = [seq_data['transform'][focf], seq_data['transform'][focf-1]]
+            fidx = 0
+        seq_data['prev_transform'] = seq_data['transform'][fidx]
+        seq_data['cur_transform'] = seq_data['transform'][fidx+1]
+        seq_data['next_transform'] = seq_data['transform'][fidx+2]
 
-        seq_data = self.graph_builder.add_particles(seq_data, cur_transform=seq_data['cur_transform'])
-        poses, vels = get_particle_poses_and_vels(seq_data, stf, enf)  # 3 x OV x 3
-
-        return seq_data, poses, vels
+        return seq_data
 
     def __getitem__(self, idx):
-        if self.split != 'train' and self.val_rollout:
-            seq_data, poses, vels = self.get_seq_data(idx, 'all')
-            ret = {'seq_data': seq_data, 'poses': poses, 'vels': vels, 'graph_builder': self.graph_builder}
-            return recursive_to_tensor(ret)
 
-        seq_data, poses, vels = self.get_seq_data(idx % len(self.all_hdf5), 'random3')
-        if self.noise > 0:
-            poses, vels = add_noise(poses, vels, self.noise, seq_data['dt'], 'cumu')
-
-        cur_poses, cur_vels = poses[1], vels[1]  # OV x 3
-        nxt_poses, nxt_vels = poses[2], vels[2]  # OV x 3
-
-        graph = self.graph_builder.prep_graph(cur_poses, cur_vels, seq_data)
-
-        seq_data.update({
-            'target_poses': nxt_poses,
-            'target_vels': nxt_vels,
-            'cur_poses': cur_poses,
-            'cur_vels': cur_vels,
-            'graph': graph,
-        })
+        seq_data = self.get_seq_data(idx % len(self.all_hdf5), 'random3')
+        seq_data['graph'] = self.graph_builder.prep_graph(seq_data, noise_std=self.noise)
         seq_data = recursive_to_tensor(seq_data)
+        if self.val_rollout and self.split != 'train':
+            seq_data['graph_builder'] = self.graph_builder
         return seq_data
 
 
 if __name__ == '__main__':
     # download_movi_dataset()
-    save_kubric_assets()
-    raise AttributeError
+    # save_kubric_assets()
+    # raise AttributeError
 
     import os
     import yaml
@@ -258,49 +244,31 @@ if __name__ == '__main__':
         subset: movi_a
         skip: 1
         split: 'train'
-        spacing: 0.2
+        spacing: 0.1
         f1_radius: 0.6
-        add_density: False
         graph_type: invarnet
-        particle_type: rt_surface_sampling
-        old_movi_setting: False
+        particle_type: rt_same_spacing
+        same_obj_rels: False
     """)
     data_config = cfg['data']
     dataset = MOViDataset(cfg['data'])
 
-    out_dir = '/ccn2/u/rmvenkat/chpatel/test/videos/movi_check'
+    out_dir = '/ccn2/u/rmvenkat/chpatel/test/videos/movi_rtss_2'
     os.makedirs(out_dir, exist_ok=True)
 
     for sid in np.random.randint(0, len(dataset.all_hdf5), size=(10,)):
-        seq_data, poses, vels = dataset.get_seq_data(sid, 'all')
-        if dataset.particle_type == 'mesh_verts' and False:
-            imgs = []
-            instance_idx = seq_data['instance_idx']
-            mv = MeshViewer(use_offscreen=True, width=512, height=512, cam_pos=seq_data['cam_pos'], add_axis=True, add_floor=False)
-            for oi, (st, en) in enumerate(zip(instance_idx[:-1], instance_idx[1:])):
-                mv.add_mesh_seq([trimesh.Trimesh(vertices=poses[i, st:en], 
-                                                faces=seq_data['faces'][oi]) for i in range(poses.shape[0])])
-            imgs = mv.animate()
-            del mv
-        elif dataset.particle_type in ['rt_imp_sampling', 'rt_surface_sampling']:
-            imgs = []
-            for i in range(poses.shape[0]):
-                seq_data['cur_transform'] = [seq_data['transform'][i], seq_data['transform'][i-1]] if i!=0 else [seq_data['transform'][i]]*2
-                seq_data = dataset.graph_builder.add_particles(seq_data, seq_data['cur_transform'])
-                cur_nodes = np.concatenate(transform_points(seq_data['obj_points'], seq_data['cur_transform'][0], None))
-                im = viz_points(dcn(cur_nodes), seq_data['instance_idx'], cam_pos=seq_data['cam_pos'], add_axis=True, add_floor=True)
-                imgs.append(im)
-            imgs = np.stack(imgs)
-        else:
-            imgs = []
-            for i in range(poses.shape[0]):
-                graph = dataset.graph_builder.prep_graph(poses[i], vels[i], seq_data)
-                cur_nodes = dcn(poses[i])
-                cur_nodes = np.concatenate([dcn(poses[i]), dcn(graph['root_poses'])], 0)
-                # im = viz_points(dcn(cur_nodes), seq_data['instance_idx'], graph['rels'], cam_pos=seq_data['cam_pos'], add_axis=True, add_floor=True)
-                im = viz_points(dcn(cur_nodes), seq_data['instance_idx'], cam_pos=seq_data['cam_pos'], add_axis=True, add_floor=True)
-                imgs.append(im)
-            imgs = np.stack(imgs)
+        seq_data = dataset.get_seq_data(sid, 'all')
+
+        imgs = []
+        for i in range(seq_data['time_step']-1):
+            seq_data['prev_transform'], seq_data['cur_transform'] = seq_data['transform'][i], seq_data['transform'][i+1]
+            graph = dataset.graph_builder.prep_graph(seq_data)
+            # cur_nodes = dcn(seq_data['cur_poses'])
+            cur_nodes = np.concatenate([dcn(seq_data['cur_poses']), dcn(graph['root_poses'])], 0)
+            im = viz_points(cur_nodes, seq_data['instance_idx'], graph['rels'], cam_pos=seq_data['cam_pos'], add_axis=True, add_floor=True)
+            # im = viz_points(cur_nodes, seq_data['instance_idx'], cam_pos=seq_data['cam_pos'], add_axis=True, add_floor=True)
+            imgs.append(im)
+        imgs = np.stack(imgs[:1]+imgs)
 
         rgb = np.stack([cv2.resize(x, imgs.shape[-3:-1]) for x in dcn(seq_data['imgs'])])
         save_video(np.concatenate([rgb, imgs], -2), f'{out_dir}/{sid}.webm', fps=int(1./seq_data['dt']))

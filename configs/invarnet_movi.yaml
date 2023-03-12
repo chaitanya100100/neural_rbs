@@ -9,8 +9,8 @@ data:
   f1_radius: 0.6
   graph_type: invarnet
   particle_type: rt_same_spacing
-  add_density: False
-  old_movi_setting: False
+  val_rollout: True
+  same_obj_rels: False
 train:
   batch_size : 1
   viz_after: 5000
@@ -19,7 +19,7 @@ train:
   val_after: 1
   lr : 1.e-4
   weight_decay: 0.
-  lr_scheduler: 'plateau'
+  lr_scheduler: ''
   num_epochs : 10000
   accu_grad_batches: 2
   only_validate: False

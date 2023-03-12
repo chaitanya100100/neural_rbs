@@ -14,7 +14,7 @@ from utils.cpconfig import get_config
 from train.dpinet_module import DPINet_Module
 from train.invarnet_module import InvarNet_Module
 
-from utils.train_utils import PhysionDynamicsDataModule, MOViDataModule
+from utils.train_utils import MOViDataModule
 
 
 def main():
@@ -27,7 +27,8 @@ def main():
     pl.seed_everything(62, workers=True)
 
     if cfg['data']['dataset_class'] != 'movi':
-        datamodule = PhysionDynamicsDataModule(cfg)
+        # datamodule = PhysionDynamicsDataModule(cfg)
+        pass
     else:
         datamodule = MOViDataModule(cfg)
     model = pl_modules[cfg['model']['model_name']](cfg)

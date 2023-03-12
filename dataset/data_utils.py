@@ -319,6 +319,7 @@ def load_entire_hdf5(dct):
 
 
 class ReadoutLabels():
+    """An easy way to get OCP labels of physion sequences."""
     def __init__(self, saved_data_path):
         labels = {}
         for scen in SCENARIOS:

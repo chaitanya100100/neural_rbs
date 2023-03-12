@@ -102,7 +102,6 @@ def subsample_particles_on_large_objects(dct, limit=3000):
         return dct
     
     # print("subsampled from old instance idx {} to new instance idx {}".format(dct['instance_idx'], new_instance_idx))
-    dct["n_particles"] = new_instance_idx[-1]
     dct["instance_idx"] = new_instance_idx
     return dct
 
@@ -126,6 +125,12 @@ def transform_points(pts, transform, scale=None, instance_idx=None):
     # transform: O x 4 x 4
     # scale: O x 3
     # returns O x [V x 3] or OV x 3
+
+    if transform.ndim == 4:
+        ret = [transform_points(pts, tr, scale, instance_idx) for tr in transform]
+        if not isinstance(pts, list):
+            ret = np.stack(ret)
+        return ret
 
     if instance_idx is not None:
         pts = np.split(pts, instance_idx[1:-1])
@@ -151,38 +156,38 @@ def reverse_transform_points(pts, transform, scale=None, instance_idx=None):
     return ret
 
 
-def get_particle_poses_and_vels(dct, start_frame, end_frame):
-    start_frame = 0 if start_frame is None else start_frame
-    end_frame = dct['time_step'] if end_frame is None else end_frame
-
+def get_particle_poses_and_vels_2(dct, noise_std=None):
+    """Adds poses and vels of shape (OV x 3) to the dictionary."""
+    assert 'cur_transform' in dct and 'prev_transform' in dct
     obj_pts = dct['obj_points']  # O x [V x 3]
-    transform = dct['transform'][start_frame:end_frame]  # N x [O x 4]
     assert np.all(dct['instance_idx'] == np.cumsum([0] + [op.shape[0] for op in obj_pts]))
     assert all([op.shape[0] > 0 for op in obj_pts])
 
-    # compute points in world frame
-    poses = np.stack([np.concatenate(transform_points(obj_pts, t), 0) for t in transform])  # N x OV x 3
-    assert poses.shape[1] == dct['instance_idx'][-1]
-    # compute velocities
-    vels = [(poses[i] - poses[i-1]) / dct['dt'] for i in range(1, len(poses))] # N-1 x [OV x 3]
-    vels = np.stack([vels[0].copy()] + vels)  # N x OV x 3
-    return poses, vels
+    prev_poses = np.concatenate(transform_points(obj_pts, dct['prev_transform']), 0)  # OV x 3
+    cur_poses = np.concatenate(transform_points(obj_pts, dct['cur_transform']), 0)  # OV x 3
+    if noise_std is not None:
+        noise = np.cumsum(np.random.normal(0, noise_std, [3, cur_poses.shape[0], 3]), 0)
+        prev_poses += noise[0]
+        cur_poses += noise[1]
+    cur_vels = (cur_poses - prev_poses) / dct['dt']  # OV x 3
+    dct['cur_poses'], dct['cur_vels'], dct['prev_poses'] = cur_poses, cur_vels, prev_poses
 
-def add_noise(poses, vels, noise_std, dt, noise_type):
-    # poses, vels: N x OV x 3
-    new_vels = vels.copy()
-    if noise_type == 'single':
-        new_vels += np.random.normal(0, noise_std, new_vels.shape)
-    elif noise_type == 'cumu':
-        new_vels += np.cumsum(np.random.normal(0, noise_std, new_vels.shape), 0)
-    else:
-        raise NotImplementedError
-
-    new_poses = [poses[0]]
-    for i in range(1, len(poses)):
-        new_poses.append(new_poses[-1] + new_vels[i] * dt)
-    new_poses = np.stack(new_poses)
-    return new_poses, new_vels
+    if 'next_transform' in dct:
+        next_poses = np.concatenate(transform_points(obj_pts, dct['next_transform']), 0)  # OV x 3
+        if noise_std is not None: next_poses += noise[2]
+        next_vels = (next_poses - cur_poses) / dct['dt'] # OV x 3
+        dct['next_poses'], dct['next_vels'] = next_poses, next_vels
+    
+    # transform CoMs
+    prev_coms = np.concatenate(transform_points(dct['coms'][:, None, :], dct['prev_transform']), 0) # O x 3
+    cur_coms = np.concatenate(transform_points(dct['coms'][:, None, :], dct['cur_transform']), 0) # O x 3
+    cur_com_vels = (cur_coms - prev_coms) / dct['dt'] # O x 3
+    dct['prev_coms'], dct['cur_coms'], dct['cur_com_vels'] = prev_coms, cur_coms, cur_com_vels
+    if 'next_transform' in dct:
+        next_coms = np.concatenate(transform_points(dct['coms'][:, None, :], dct['next_transform']), 0) # O x 3
+        next_com_vels = (next_coms - cur_coms) / dct['dt'] # O x 3
+        dct['next_coms'], dct['next_com_vels'] = next_coms, next_com_vels
+    return dct
 
 
 def find_relations_neighbor(poses, query_idx, anchor_idx, radius, order):
@@ -206,6 +211,7 @@ def find_relations_neighbor(poses, query_idx, anchor_idx, radius, order):
 
 
 def find_relations_neighbor_scene(poses, instance_idx, radius, same_obj_rels):
+    """Create rels using nearest neighbor search. same_obj_rels: if True, create rels between points in the same object."""
     num_pts = poses.shape[0]
     if same_obj_rels:
         inter_rels = find_relations_neighbor(poses, np.arange(num_pts, dtype=int), np.arange(num_pts, dtype=int), radius, 2)
@@ -220,6 +226,7 @@ def find_relations_neighbor_scene(poses, instance_idx, radius, same_obj_rels):
 
 
 def careful_revoxelized(vox, shape):
+    """trimesh.voxel.VoxelGrid.revoxelized can miss the boundary. This is hacky modified function to prevent that."""
     shape = tuple(shape)
     bounds = vox.bounds.copy()
     extents = vox.extents
@@ -262,24 +269,6 @@ def get_imp_particles(shape_label, radius, assets, transform, scale, curv_thresh
     is_imp = np.split(is_imp, ist_idx[1:-1])
     imp_verts = [vt[ix] for vt, ix in zip(verts, is_imp)]
     imp_verts = reverse_transform_points(imp_verts, transform)
-    return imp_verts
-
-def get_surface_particles(shape_label, radius, assets, transform, scale):
-    can_meshes = [assets[sl.item()]['surface'] for oi, sl in enumerate(shape_label)]
-
-    # transform
-    surf_verts = transform_points([ms.vertices.view(np.ndarray) for ms in can_meshes], transform, scale) 
-    num_obj_verts = [ms.shape[0] for ms in surf_verts]
-    ist_idx = np.cumsum([0] + num_obj_verts)
-    # calculate nearest neighbors
-    verts_stack = np.concatenate(surf_verts)
-    rels = find_relations_neighbor_scene(verts_stack, ist_idx, radius, same_obj_rels=False).reshape(-1)
-    is_prox_verts = np.isin(np.arange(ist_idx[-1], dtype=int), rels)
-    is_prox_verts = np.logical_or(is_prox_verts, verts_stack[:, 1] < radius)
-    # keep verts with neighbors
-    is_imp = is_prox_verts
-    is_imp = np.split(is_imp, ist_idx[1:-1])
-    imp_verts = [cms.vertices.view(np.ndarray)[ix] * sc[None] for cms, ix, sc in zip(can_meshes, is_imp, scale)]
     return imp_verts
 
 

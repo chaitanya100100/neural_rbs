@@ -12,10 +12,10 @@ from scipy.spatial.transform.rotation import Rotation
 import warnings
 
 from dataset.movi_dataset import MOViDataset
-from dataset.physion_particle_dataset import PhysionParticleDataset
+# from dataset.physion_particle_dataset import PhysionParticleDataset
 from dataset.data_utils import get_dynamics_seq_paths, get_readout_seq_paths, collate_fn, SCENARIOS
 
-
+"""
 class PhysionDynamicsDataModule(pl.LightningDataModule):
 
     def __init__(self, cfg):
@@ -43,7 +43,7 @@ class PhysionDynamicsDataModule(pl.LightningDataModule):
         self.val_dataset = self.get_dynamics_dataset(cfg['data'], split='val')
 
         self.batch_size = cfg['train']['batch_size']
-        self.num_workers = 8
+        self.num_workers = 16
         torch.multiprocessing.set_sharing_strategy('file_system')
         import warnings; warnings.filterwarnings("ignore", ".*does not have many workers which may be a bottleneck. Consider increasing.*")
 
@@ -54,7 +54,7 @@ class PhysionDynamicsDataModule(pl.LightningDataModule):
     def val_dataloader(self):
         val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, num_workers=self.num_workers, drop_last=False, shuffle=False, pin_memory=True)
         return val_dataloader
-
+"""
 
 class MOViDataModule(pl.LightningDataModule):
 
@@ -78,7 +78,7 @@ class MOViDataModule(pl.LightningDataModule):
         self.val_dataset = self.get_movi_dataset(cfg['data'], split='val')
 
         self.batch_size = cfg['train']['batch_size']
-        self.num_workers = 8
+        self.num_workers = 16
         torch.multiprocessing.set_sharing_strategy('file_system')
         import warnings; warnings.filterwarnings("ignore", ".*does not have many workers which may be a bottleneck. Consider increasing.*")
 

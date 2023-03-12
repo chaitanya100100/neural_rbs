@@ -8,7 +8,7 @@ import scipy
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 
-from model.dynamic.dpinet import DPINet
+from model.dpinet import DPINet
 from utils.viz_utils import viz_points, dcn, put_text_on_img
 from utils.train_utils import recursive_to
 from dataset.data_utils import recursive_to_tensor
