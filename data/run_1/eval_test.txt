@@ -1,0 +1,24 @@
+
+
+
+2023-03-11 21:05:25.458140
+
+
+
+2023-03-11 21:24:49.698008
+
+
+
+2023-03-11 21:25:21.179890
+
+
+
+2023-03-11 21:26:22.624225
+0 2 GT Acc: 1.000, GT Conf Mat: [1], Cur Acc: 1.000, Cur Conf Mat: [1], Angle Err: 0.701, Trans Err: 0.000 0
+1 2 GT Acc: 1.000, GT Conf Mat: [2], Cur Acc: 1.000, Cur Conf Mat: [2], Angle Err: 0.965, Trans Err: 0.000 1
+
+
+
+2023-03-11 21:27:28.062084
+0 2 GT Acc: 1.000, GT Conf Mat: [1], Cur Acc: 1.000, Cur Conf Mat: [1], Angle Err: 0.701, Trans Err: 0.000 0
+1 2 GT Acc: 1.000, GT Conf Mat: [2], Cur Acc: 1.000, Cur Conf Mat: [2], Angle Err: 0.965, Trans Err: 0.000 1

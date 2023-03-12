@@ -11,7 +11,7 @@ from dataset.data_utils import recursive_to_tensor, MAX_ROLLOUT_LENGTH, READOUT_
 from utils.cpconfig import get_config
 from train.dpinet_module import DPINet_Module, check_ocp, rollout_error
 from train.invarnet_module import InvarNet_Module
-from utils.train_utils import PhysionDynamicsDataModule, MOViDataModule
+from utils.train_utils import MOViDataModule
 from utils.train_utils import recursive_to, get_angle_error, get_trans_error
 from utils.viz_utils import save_video, dcn, print_dict, viz_points, append_to_file
 
@@ -35,22 +35,23 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
 
     if cfg['data']['dataset_class'] != 'movi':
-        scenario = cfg['data']['protocol'].split('_')[1]
-        if eval_split in ['train', 'val']:
-            datamodule = PhysionDynamicsDataModule(cfg)
-            datamodule.setup(eval_split)
-            dataset = datamodule.val_dataset if eval_split == 'val' else datamodule.train_dataset
-            seq_ids = np.unique(np.linspace(0, len(dataset.all_hdf5) - 1, 100, dtype=int)).tolist()
-        elif eval_split == 'test':
-            cfg['data']['scenario'] = scenario
-            datamodule = ReadoutDataModule(cfg)
-            datamodule.setup('test')
-            dataset = datamodule.test_dataset
-            seq_ids = range(0, len(dataset.all_hdf5))
-        else:
-            raise AttributeError("Unknown eval_split: {}".format(eval_split))
+        pass
+        # scenario = cfg['data']['protocol'].split('_')[1]
+        # if eval_split in ['train', 'val']:
+        #     datamodule = PhysionDynamicsDataModule(cfg)
+        #     datamodule.setup(eval_split)
+        #     dataset = datamodule.val_dataset if eval_split == 'val' else datamodule.train_dataset
+        #     seq_ids = np.unique(np.linspace(0, len(dataset.all_hdf5) - 1, 100, dtype=int)).tolist()
+        # elif eval_split == 'test':
+        #     cfg['data']['scenario'] = scenario
+        #     datamodule = ReadoutDataModule(cfg)
+        #     datamodule.setup('test')
+        #     dataset = datamodule.test_dataset
+        #     seq_ids = range(0, len(dataset.all_hdf5))
+        # else:
+        #     raise AttributeError("Unknown eval_split: {}".format(eval_split))
 
-        thresh = READOUT_THRESHOLD[scenario] * 0.05    
+        # thresh = READOUT_THRESHOLD[scenario] * 0.05    
     else:
         datamodule = MOViDataModule(cfg)
         datamodule.setup(eval_split)
@@ -66,39 +67,15 @@ def main():
 
     labels, gt_det_labels, pred_det_labels, angle_err, trans_err = [], [], [], [], []
     for i, seq_id in enumerate(seq_ids):
-        seq_data, seq_poses, seq_vels = dataset.get_seq_data(seq_id, 'all')
-        dt = seq_data['dt']
-        start_frame = seq_data['start_frame']
-        num_steps = int(seq_poses.shape[0] * 1.3) - start_frame
-        cam_pos = seq_data['cam_pos']
-
-        # predict from start_frame
-        poses_inp, vels_inp = recursive_to(recursive_to_tensor([seq_poses[start_frame], seq_vels[start_frame] ]), device)
-        pred_poses, _, pred_transforms, instance_idx = model.rollout(poses_inp, vels_inp, seq_data, num_steps, dataset.graph_builder)
-        pred_poses = [dcn(pp) for pp in pred_poses] if isinstance(pred_poses, list) else dcn(pred_poses)
-
-        # append [0, start_frame) to pred_poses
-        if start_frame > 0:
-            pred_poses = np.concatenate([
-                np.stack([seq_poses[0]] + [seq_poses[fi-1] + seq_vels[fi] * dt for fi in range(1, start_frame)]),
-                pred_poses], 0)
-        assert len(pred_poses) == num_steps + start_frame
+        seq_data = dataset.get_seq_data(seq_id, 'all')
+        seq_data['graph'] = dataset.graph_builder.prep_graph(seq_data)
+        seq_data['graph_builder'] = dataset.graph_builder
+        seq_data = recursive_to(recursive_to_tensor(seq_data), device)
+        
+        ang_err_seq, trans_err_seq, imgs = model.validation_step_rollout(seq_data, batch_idx=None, ret_viz=viz)
 
         if viz:
-            gt_imgs = viz_points(seq_poses, seq_data['instance_idx'], cam_pos=cam_pos, add_axis=True, add_floor=True)
-            pred_imgs = viz_points(pred_poses, instance_idx, cam_pos=cam_pos, add_axis=True, add_floor=True)
-
-            def pad_it(arr, before, after):
-                return np.pad(arr, pad_width=[(before, after), (0,0), (0,0), (0,0)], mode='edge')
-            max_len = max(gt_imgs.shape[0], pred_imgs.shape[0])
-            gt_imgs = pad_it(gt_imgs, 0, max_len-gt_imgs.shape[0])
-            pred_imgs = pad_it(pred_imgs, 0, max_len-pred_imgs.shape[0])
-            imgs = [gt_imgs, pred_imgs]
-            if 'imgs' in seq_data:
-                rgb = np.stack([cv2.resize(x, gt_imgs.shape[-3:-1]) for x in dcn(seq_data['imgs'])])
-                rgb = pad_it(rgb, 0, max_len-rgb.shape[0])
-                imgs.insert(0, rgb)
-            save_video(np.concatenate(imgs, -2), os.path.join(out_dir, '{}.webm'.format(seq_data['seq_name'])), fps=int(1./dt))
+            save_video(imgs, os.path.join(out_dir, '{}.webm'.format(seq_data['seq_name'])), fps=int(1./seq_data['dt'].item()))
 
         # gt_dl = check_ocp(seq_poses, instance_idx, seq_data['red_id'], seq_data['yellow_id'], dist_thresh=thresh)
         # pred_dl = check_ocp(pred_poses, instance_idx, seq_data['red_id'], seq_data['yellow_id'], dist_thresh=thresh)
@@ -115,9 +92,8 @@ def main():
         gt_conf_mat = confusion_matrix(labels, gt_det_labels)
 
         # transforms error
-        num_frames = seq_poses.shape[0]
-        angle_err.append(get_angle_error(seq_data['transform'][:, :3, :3], pred_transforms[:num_frames, :3, :3]))
-        trans_err.append(get_trans_error(seq_data['transform'][:, :3, 3], pred_transforms[:num_frames, :3, 3]) )
+        angle_err.append(ang_err_seq)
+        trans_err.append(trans_err_seq)
 
         cur_metric = "GT Acc: {:.3f}, GT Conf Mat: {}, Cur Acc: {:.3f}, Cur Conf Mat: {}, Angle Err: {:.3f}, Trans Err: {:.3f}".format(
             gt_acc, gt_conf_mat.reshape(-1), cur_acc, cur_conf_mat.reshape(-1), np.mean(angle_err), np.mean(trans_err))

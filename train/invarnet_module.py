@@ -102,32 +102,36 @@ class InvarNet_Module(pl.LightningModule):
             self.visualize(batch, out, 'train')
         return losses['loss/total']
 
-    def validation_step_rollout(self, batch, batch_idx, log_prefix=None):
+    def validation_step_rollout(self, batch, batch_idx, log_prefix=None, ret_viz=False):
         seq_data = batch
         graph_builder, num_frames = batch['graph_builder'], seq_data['time_step']
         pred_poses, _, seq_transforms, instance_idx = self.rollout(seq_data, num_frames, graph_builder)
 
         ang_err = get_angle_error(dcn(seq_data['transform'][:, :3, :3]), seq_transforms[:, :3, :3])
-        self.log(f'{log_prefix}/angle_error', ang_err, on_epoch=True, batch_size=num_frames)
         trans_err = get_trans_error(dcn(seq_data['transform'][:, :3, 3]), seq_transforms[:, :3, 3])
-        self.log(f'{log_prefix}/trans_error', trans_err, on_epoch=True, batch_size=num_frames)
-
-        self.log(f'{log_prefix}/loss/total', 0., on_epoch=True)  # dummy loss
 
         if log_prefix:
-            if batch_idx == 0:
-                gt_poses = transform_points(np.concatenate([dcn(op) for op in seq_data['obj_points']]), 
-                                            dcn(seq_data['transform']), instance_idx=dcn(seq_data['instance_idx']))
-                pred_poses = [dcn(pp) for pp in pred_poses] if isinstance(pred_poses, list) else dcn(pred_poses)
-                cam_pos = dcn(seq_data['cam_pos'])
-                gt_imgs = viz_points(gt_poses, seq_data['instance_idx'], cam_pos=cam_pos, add_axis=True, img_size=256)
-                pred_imgs = viz_points(pred_poses, instance_idx, cam_pos=cam_pos, add_axis=True, img_size=256)
-                imgs = [gt_imgs, pred_imgs]
-                if 'imgs' in seq_data:
-                    rgb = np.stack([cv2.resize(x, gt_imgs.shape[-3:-1]) for x in dcn(seq_data['imgs'])], 0)
-                    imgs.insert(0, rgb)
-                imgs = np.concatenate(imgs, -2)
+            self.log(f'{log_prefix}/angle_error', ang_err, on_epoch=True, batch_size=num_frames)
+            self.log(f'{log_prefix}/trans_error', trans_err, on_epoch=True, batch_size=num_frames)
+            self.log(f'{log_prefix}/loss/total', 0., on_epoch=True)  # dummy loss
+
+        imgs = None
+        if (log_prefix and batch_idx == 0) or ret_viz:
+            gt_poses = transform_points(np.concatenate([dcn(op) for op in seq_data['obj_points']]), 
+                                        dcn(seq_data['transform']), instance_idx=dcn(seq_data['instance_idx']))
+            pred_poses = [dcn(pp) for pp in pred_poses] if isinstance(pred_poses, list) else dcn(pred_poses)
+            cam_pos = dcn(seq_data['cam_pos'])
+            gt_imgs = viz_points(gt_poses, seq_data['instance_idx'], cam_pos=cam_pos, add_axis=True, img_size=256)
+            pred_imgs = viz_points(pred_poses, instance_idx, cam_pos=cam_pos, add_axis=True, img_size=256)
+            imgs = [gt_imgs, pred_imgs]
+            if 'imgs' in seq_data:
+                rgb = np.stack([cv2.resize(x, gt_imgs.shape[-3:-1]) for x in dcn(seq_data['imgs'])], 0)
+                imgs.insert(0, rgb)
+            imgs = np.concatenate(imgs, -2)
+
+        if log_prefix and batch_idx == 0:
                 self.logger.experiment.add_video(f'{log_prefix}/rollout', imgs[None].transpose([0, 1, 4, 2, 3]), self.global_step, fps=int(1./seq_data['dt']))
+        return ang_err, trans_err, imgs
 
     def validation_step(self, batch, batch_idx):
         if self.cfg['data']['val_rollout']:
