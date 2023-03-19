@@ -74,10 +74,9 @@ class InvarNet(MessagePassing):
         for _ in range(self.num_mp_blocks):
             for idx, mpri in enumerate(self.mp_rel_idx):
                 relidx = (rel_stages == mpri)  # size R, total number of True is r
-                # ridx, sidx = rels[relidx, 0], rels[relidx, 1]  # size r, r
 
                 idx_list = idx, relidx
-                agg_new_rel_latents, new_rel_latents = self.propagate(rels, rel_stages=rel_stages, mpri=mpri, idx_list=idx_list, rel_latents=rel_latents, node_latents=node_latents, size=None)
+                agg_new_rel_latents, new_rel_latents = self.propagate(rels.T, rel_stages=rel_stages, mpri=mpri, idx_list=idx_list, rel_latents=rel_latents, node_latents=node_latents, rels=rels, size=None)
                 # new_rel_latents, rli_ltn = self.message(idx_list, rel_latents, node_latents, num_rels)
                 # agg_new_rel_latents = self.aggregate(rli_ltn, ridx, num_nodes)
                 new_node_latents = self.node_processors[idx](torch.cat([node_latents, agg_new_rel_latents], 1))  # N
@@ -90,23 +89,19 @@ class InvarNet(MessagePassing):
         out = self.node_dec(node_latents)
         return out
     
-    def message(self, index, rel_stages, mpri, idx_list, rel_latents, node_latents):
-        rels = index
-
-        relidx = (rel_stages == mpri)
-        ridx, sidx = rels[relidx, 0], rels[relidx, 1]
-        idx, relidx = idx_list
-        rli_ltn = self.rel_processors[idx](torch.cat([rel_latents[relidx], node_latents[ridx], node_latents[sidx]], 1))  # r
+    def message(self, index, rel_stages, mpri, idx_list, rel_latents, node_latents, rels):
         
+        idx, relidx = idx_list
+        ridx, sidx = rels[relidx, 0], rels[relidx, 1]
+        rli_ltn = self.rel_processors[idx](torch.cat([rel_latents[relidx], node_latents[ridx], node_latents[sidx]], 1))  # r
         if self.effect_normalization != 'none':
             rli_ltn = self.rel_processor_norm[idx](rli_ltn)
         new_rel_latents = torch_scatter.scatter(rli_ltn, torch.where(relidx)[0], dim=0, dim_size=rels.shape[0])  # R
-        
-        return new_rel_latents, rli_ltn
+        return new_rel_latents, rli_ltn, ridx, node_latents.shape[0]
         
 
     def aggregate(self, inputs, index, dim_size=None):
-        new_rel_latents, rli_ltn = inputs
-        agg_new_rel_latents = torch_scatter.scatter_add(rli_ltn, index, dim=0, dim_size=dim_size)  # N
+        new_rel_latents, rli_ltn, ridx, s = inputs
+        agg_new_rel_latents = torch_scatter.scatter_add(rli_ltn,ridx, dim=0, dim_size=s)  # N
         return agg_new_rel_latents, new_rel_latents
 
