@@ -2,111 +2,19 @@ import numpy as np
 from scipy.spatial.transform.rotation import Rotation
 import scipy.spatial as spatial
 import trimesh
-import os
 import warnings
-import copy
 import scipy
 
 
-def get_colors():
-    from utils.renderer import colors as colors_dict
-    names = ['yellow', 'red'] + [c for c in colors_dict.keys() if c not in ['yellow', 'red']]
-    return [colors_dict[n] for n in names]
-
-
-def remove_carpet(dct):
-    ridx = 0
-    num_obj = dct['rot'].shape[1]
-    keep_idx = [i!=ridx for i in range(num_obj)]
-    dct['rot'] = dct['rot'][:, keep_idx]
-    dct['trans'] = dct['trans'][:, keep_idx]
-    dct['red_id'] = dct['yellow_id'] = 0
-    if 'obj_points' in dct:
-        dct['obj_points'] = [dct['obj_points'][i] for i in range(num_obj) if i!=ridx]
-        assert 'instance_idx' in dct
-        new_instance_idx = [0]
-        for x in dct['obj_points']:
-            new_instance_idx.append(new_instance_idx[-1] + len(x))
-        dct['instance_idx'] = new_instance_idx
-    if 'scale' in dct:
-        dct['scale'] = dct['scale'][keep_idx]
-    if 'shape_label' in dct:
-        dct['shape_label'] = [dct['shape_label'][i] for i in range(num_obj) if i!=ridx]
-    if 'mass' in dct:
-        dct['mass'] = dct['mass'][keep_idx]
-    if 'instance' in dct:
-        dct['instance'] = dct['instance'][keep_idx]
-    if 'clusters' in dct:
-        dct['clusters'] = dct['clusters'][keep_idx]
-    return dct
-
-
-def remove_large_objects(dct):
-    if dct["instance_idx"][-1] <= 3000:
-        return dct
-
-    # Find ids of objects NOT to remove
-    critical_objects = [b'cloth_square', b'buddah', b'bowl', b'cone', b'cube', b'cylinder', b'dumbbell', b'octahedron', b'pentagon', b'pipe', b'platonic', b'pyramid', b'sphere', b'torus', b'triangular_prism']
-    ok_ids = []
-    for i, (st, en) in enumerate(zip(dct['instance_idx'][:-1], dct['instance_idx'][1:])):
-        if en <= st:
-            print("Warning: empty object")
-            import ipdb; ipdb.set_trace()
-        if dct['instance'][i] not in critical_objects and (en-st) > 3000:
-            continue
-        ok_ids.append(i)
-    # ok_ids = [1]
-    if len(ok_ids) == len(dct['instance_idx'])-1:
-        return dct
-
-    # Change static data accordingly
-    pid = 0
-    new_instance_idx = [pid]
-    for i, (st, en) in enumerate(zip(dct['instance_idx'][:-1], dct['instance_idx'][1:])):
-        if i not in ok_ids:
-            continue
-        pid += en-st
-        new_instance_idx.append(pid)
-
-    # old_num_obj_pts = (np.array(dct['instance_idx'])[1:] - np.array(dct['instance_idx'])[:-1]).tolist()
-    # new_num_obj_pts = (np.array(new_instance_idx)[1:] - np.array(new_instance_idx)[:-1]).tolist()
-    # print("Old num obj pts: {} . New num obj pts {}".format(old_num_obj_pts, new_num_obj_pts))
-
-    imp_keys = ["root_des_radius", "root_num", "clusters", "instance", "material", "obj_points"]
-    for key in imp_keys:
-        if key in dct:
-            dct[key] = [x for i, x in enumerate(dct[key]) if i in ok_ids]
-
-    dct["n_objects"] = len(new_instance_idx)-1
-    dct["instance_idx"] = np.array(new_instance_idx)
-    dct["ok_ids"] = ok_ids
-
-    # Change dynamic data accordingly
-    dct['rot'] = dct['rot'][:, ok_ids]
-    dct['trans'] = dct['trans'][:, ok_ids]
-    return dct
-
-
-def subsample_particles_on_large_objects(dct, limit=3000):
-    new_instance_idx = [0]
-    is_subsample = False
-    for oi, (st, en) in enumerate(zip(dct['instance_idx'][:-1], dct['instance_idx'][1:])):
-        if en-st > limit and dct["instance"][oi] != b'cloth_square':
-            idxs = np.random.choice(en-st, limit, replace=False)
-            dct['obj_points'][oi] = dct['obj_points'][oi][idxs]
-            dct['clusters'][oi][0][0] = dct['clusters'][oi][0][0][idxs]
-            is_subsample = True
-        tmp = new_instance_idx[-1] + len(dct['obj_points'][oi])
-        new_instance_idx.append(tmp)
-    if not is_subsample:
-        return dct
-    
-    # print("subsampled from old instance idx {} to new instance idx {}".format(dct['instance_idx'], new_instance_idx))
-    dct["instance_idx"] = new_instance_idx
-    return dct
-
-
 def get_transformation_matrix(rot, trans, scale=None):
+    """Get 4x4 transformation matrix from rotation, translation and optionally scale. Works with batched input.
+    Args:
+        rot: N x 4 quaternion or N x 3 x 3 rotation matrix
+        trans: N x 3 translation
+        scale: N x 3 scale
+    Returns:
+        N x 4 x 4 transformation matrix
+    """
     if rot.shape[-1] == 4:
         rotmat = Rotation.from_quat(rot.reshape([-1, 4])).as_matrix().reshape(list(rot.shape[:-1]) + [3,3])
     else:
@@ -121,11 +29,18 @@ def get_transformation_matrix(rot, trans, scale=None):
 
 
 def transform_points(pts, transform, scale=None, instance_idx=None):
-    # pts: O x [V x 3] or OV x 3
-    # transform: O x 4 x 4
-    # scale: O x 3
-    # returns O x [V x 3] or OV x 3
-
+    """Transform scene points by a transformation matrix.
+    O is object dimension. V is point dimension. Also works with batched input.
+    Args:
+        pts: O x [V x 3] or OV x 3
+        transform: O x 4 x 4
+        scale: O x 3
+        instance_idx: O+1 lengthed array denoting start and end indices of each object.
+            Required if pts is OV x 3
+    Returns:
+        O x [V x 3] or OV x 3
+    """
+    # Batched input
     if transform.ndim == 4:
         ret = [transform_points(pts, tr, scale, instance_idx) for tr in transform]
         if not isinstance(pts, list):
@@ -142,22 +57,13 @@ def transform_points(pts, transform, scale=None, instance_idx=None):
         ret = np.concatenate(ret, axis=0)
     return ret  # O x [V x 3] or OV x 3
 
-def reverse_transform_points(pts, transform, scale=None, instance_idx=None):
-    if instance_idx is not None:
-        pts = np.split(pts, instance_idx[1:-1])
-    if instance_idx is not None:
-        pts = np.split(pts, instance_idx[1:-1])
-    if scale is not None:
-        transform = transform.copy()
-        transform[:, :3, :3] = transform[:, :3, :3] / scale[:, None, :]
-    ret = [ (t[:3,:3].T @ (p - t[:3, 3][None]).T).T for p, t in zip(pts, transform)]
-    if instance_idx is not None:
-        ret = np.concatenate(ret, axis=0)
-    return ret
-
 
 def get_particle_poses_and_vels_2(dct, noise_std=None):
-    """Adds poses and vels of shape (OV x 3) to the dictionary."""
+    """Adds poses and vels of shape (OV x 3) to the data dictionary.
+    
+    It will calculate cur_poses, cur_vels, prev_poses, cur_coms, cur_com_vels, prev_coms.
+    If next_transform is in the dictionary, it will also calculate next_poses, next_vels, next_coms, next_com_vels.
+    """
     assert 'cur_transform' in dct and 'prev_transform' in dct
     obj_pts = dct['obj_points']  # O x [V x 3]
     assert np.all(dct['instance_idx'] == np.cumsum([0] + [op.shape[0] for op in obj_pts]))
@@ -191,10 +97,15 @@ def get_particle_poses_and_vels_2(dct, noise_std=None):
 
 
 def find_relations_neighbor(poses, query_idx, anchor_idx, radius, order):
-    # poses: OV x 3
-    # query_idx: Q
-    # anchor_idx: A
-    # returns rels: R x 2
+    """Find nearest neighbors within a radius.
+    Args:
+        poses: OV x 3 array of points
+        query_idx: Q array of indices to query
+        anchor_idx: A array of indices to consider for neighbors
+        order: p-norm to use for distance
+    Returns:
+        rels: R x 2 array of relations (receiver, sender)
+    """
     if len(anchor_idx) == 0: return np.zeros((0, 2), dtype=int)
     point_tree = spatial.cKDTree(poses[anchor_idx])
     neighbors = point_tree.query_ball_point(poses[query_idx], radius, p=order)
@@ -211,7 +122,15 @@ def find_relations_neighbor(poses, query_idx, anchor_idx, radius, order):
 
 
 def find_relations_neighbor_scene(poses, instance_idx, radius, same_obj_rels):
-    """Create rels using nearest neighbor search. same_obj_rels: if True, create rels between points in the same object."""
+    """A useful wrapper around `find_relations_neighbor`.
+    Args:
+        poses: OV x 3 array of points
+        instance_idx: O+1 array of indices to separate objects.
+        radius: radius to use for neighbor search
+        same_obj_rels: whether to include relations between points in the same object
+    Returns:
+        inter_rels: R x 2 array of relations (receiver, sender) between objects.
+    """
     num_pts = poses.shape[0]
     if same_obj_rels:
         inter_rels = find_relations_neighbor(poses, np.arange(num_pts, dtype=int), np.arange(num_pts, dtype=int), radius, 2)
@@ -242,39 +161,11 @@ def careful_revoxelized(vox, shape):
         transform=trimesh.transformations.scale_and_translate(scale, translate))
 
 
-def get_imp_particles(shape_label, radius, assets, transform, scale, curv_threshold=70):
-    # points to canonical meshes
-    can_meshes = [assets[sl.item()]['mesh'] for oi, sl in enumerate(shape_label)]
-    spacing = 0.1
-
-    mesh_pts = transform_points([ms.vertices.view(np.ndarray) for ms in can_meshes], transform, scale)
-    meshes = [trimesh.Trimesh(vertices=pts, faces=can_meshes[oi].faces) for oi, pts in enumerate(mesh_pts)]
-    meshes = [ms.copy().subdivide_to_size(spacing*3.5) for ms in meshes]
-    num_obj_verts = [ms.vertices.shape[0] for ms in meshes]
-    ist_idx = np.cumsum([0] + num_obj_verts)
-
-    curv = [mesh_curvature_trimesh(ms, spacing*2) for ms in meshes]
-    is_detail_verts = np.concatenate(curv) > curv_threshold
-    
-    verts = [ms.vertices.view(np.ndarray) for ms in meshes]
-    verts_stack = np.concatenate(verts)
-    rels = find_relations_neighbor_scene(verts_stack, ist_idx, radius, same_obj_rels=False).reshape(-1)
-    is_prox_verts = np.isin(np.arange(ist_idx[-1], dtype=int), rels)
-    is_prox_verts = np.logical_or(is_prox_verts, verts_stack[:, 1] < radius)
-
-    is_imp = np.logical_or(is_prox_verts, is_detail_verts)
-    # is_imp = np.random.choice([0, 1], size=is_imp.shape[0], p=[0.95, 0.05]).astype(bool)
-    # is_imp = np.random.permutation(is_imp)
-    # print('imp ratio: ', is_imp.sum() / is_imp.shape[0])
-    is_imp = np.split(is_imp, ist_idx[1:-1])
-    imp_verts = [vt[ix] for vt, ix in zip(verts, is_imp)]
-    imp_verts = reverse_transform_points(imp_verts, transform)
-    return imp_verts
-
-
 def shape_matching(src, tgt):
-    # From 'Meshless Deformations Based on Shape Matching'
-    # src, tgt: N x 3
+    """Shape matching between two point clouds.
+    From the paper 'Meshless Deformations Based on Shape Matching'.
+    src, tgt: N x 3
+    """
     src_cm = src.mean(0)
     tgt_cm = tgt.mean(0)
     sq = src - src_cm[None]
@@ -298,6 +189,15 @@ def shape_matching(src, tgt):
 
 
 def shape_matching_objects(src, pred, instance_idx):
+    """Shape matching between two frames. A wrapper around `shape_matching` for every object.
+    Args:
+        src: OV x 3 array of points. source rigid object.
+        pred: OV x 3 array of points. predicted points with possible non-rigidity.
+        instance_idx: O+1 array of indices to separate objects.
+    Returns:
+        out: OV x 3 array of points. predicted points with rigidity.
+        transforms: O x 4 x 4 array of transformations for each object from src to pred.
+    """
     assert type(src) == type(pred) == np.ndarray, "src and pred must be numpy arrays"
     assert src.shape == pred.shape, "src and pred must have the same shape"
     assert src.shape[0] == instance_idx[-1], "src and instance_idx should match"
@@ -307,44 +207,3 @@ def shape_matching_objects(src, pred, instance_idx):
         out[st:en], rt = shape_matching(src[st:en], pred[st:en])
         transforms.append(rt)
     return out, np.stack(transforms)
-
-
-def seq_datapath_to_fish_datapath(filename):
-    fish_particle_data_root = '/ccn2/u/chpatel/dpinet_data/data'
-    scenario = filename.split('/')[-2]
-    seq_name = filename.split('/')[-1].split('.')[0]
-    subset = [d for d in ['dynamics_training', 'readout_training', 'model_testing'] if d in filename]
-    assert len(subset) == 1, "Unable to determine subset of {}".format(filename)
-    subset = subset[0]
-    return os.path.join(fish_particle_data_root, subset, scenario, seq_name)
-
-
-def clip_std(a, n=3):
-    m, s = a.mean(), a.std()
-    return np.clip(a, m-n*s, m+n*s)
-
-def mesh_curvature(mesh):
-    # https://blender.stackexchange.com/questions/146819/is-there-a-way-to-calculate-mean-curvature-of-a-triangular-mesh/147371#147371
-
-    e = mesh.faces[:, [0, 1, 1, 2, 2, 0]].reshape((-1, 2))                # edges v1,v2
-    fa = mesh.face_angles[:, [0, 1, 1, 2, 2, 0]].reshape((-1, 2))         # face angles at v1,v2
-
-    p1, p2 = mesh.vertices[e[:, 0]], mesh.vertices[e[:, 1]]
-    n1, n2 = mesh.vertex_normals[e[:, 0]], mesh.vertex_normals[e[:, 1]]
-    pd, nd = (p2-p1), (n2-n1)
-    ecurv = (pd*nd).sum(-1) / (pd**2).sum(-1)
-    ecurv = np.abs(ecurv)
-
-    curv = np.zeros(mesh.vertices.shape[0])
-    denom = np.zeros(mesh.vertices.shape[0])
-
-    for i in [0, 1]:
-        np.add.at(curv, e[:, i], ecurv * fa[:, i])
-        np.add.at(denom, e[:, i], fa[:, i])
-
-    return curv / denom / 2
-
-
-def mesh_curvature_trimesh(mesh, radius):
-    curv = trimesh.curvature.discrete_gaussian_curvature_measure(mesh, mesh.vertices, radius)
-    return np.abs(curv)

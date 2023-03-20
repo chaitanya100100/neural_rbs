@@ -15,6 +15,7 @@ class InvarNet(nn.Module):
 
         self.node_feat_dim = cfg['node_feat_dim']
         self.hidden_dim = cfg['hidden_dim']
+        self.num_hiddens = cfg['num_hiddens']
         self.rel_feat_dim = cfg['rel_feat_dim']
         self.mp_rel_idx = cfg['mp_rel_idx']
         self.num_mp_blocks = cfg['num_mp_blocks']
@@ -26,18 +27,18 @@ class InvarNet(nn.Module):
         # activation = nn.LeakyReLU
         # act_normalization = my_groupnorm
 
-        node_enc_args = dict(input_dim=self.node_feat_dim, output_dim=self.hidden_dim, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=2)
+        node_enc_args = dict(input_dim=self.node_feat_dim, output_dim=self.hidden_dim, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=self.num_hiddens)
         self.node_encoder = MLP(**node_enc_args)
 
-        rel_enc_args = dict(input_dim=self.rel_feat_dim, output_dim=self.hidden_dim, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=2)
+        rel_enc_args = dict(input_dim=self.rel_feat_dim, output_dim=self.hidden_dim, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=self.num_hiddens)
         self.rel_encoder = MLP(**rel_enc_args)
 
-        node_processor_args = dict(input_dim=self.hidden_dim*2, output_dim=self.hidden_dim, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=2)
+        node_processor_args = dict(input_dim=self.hidden_dim*2, output_dim=self.hidden_dim, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=self.num_hiddens)
         self.node_processors = nn.ModuleList([MLP(**node_processor_args) for _ in range(len(self.mp_rel_idx))])
-        rel_processor_args = dict(input_dim=self.hidden_dim*3, output_dim=self.hidden_dim, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=2)
+        rel_processor_args = dict(input_dim=self.hidden_dim*3, output_dim=self.hidden_dim, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=self.num_hiddens)
         self.rel_processors = nn.ModuleList([MLP(**rel_processor_args) for _ in range(len(self.mp_rel_idx))])
 
-        node_dec_args = dict(input_dim=self.hidden_dim, output_dim=3, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=2)
+        node_dec_args = dict(input_dim=self.hidden_dim, output_dim=3, hidden_dim=self.hidden_dim, activation=activation, act_normalization=act_normalization, num_hiddens=self.num_hiddens)
         self.node_dec = MLP(**node_dec_args)
 
         if self.effect_normalization != 'none':

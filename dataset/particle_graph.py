@@ -1,12 +1,6 @@
-import pickle as pkl
-import h5py
 import numpy as np
-import glob
-from functools import partial
-import os
-import copy
-from dataset.particle_data_utils import find_relations_neighbor_scene, remove_large_objects, subsample_particles_on_large_objects, careful_revoxelized
-from dataset.particle_data_utils import get_imp_particles, get_particle_poses_and_vels_2
+from dataset.particle_data_utils import find_relations_neighbor_scene, careful_revoxelized
+from dataset.particle_data_utils import get_particle_poses_and_vels_2
 from utils.viz_utils import dcn
 
 
@@ -24,18 +18,11 @@ def get_type_idx(num: int, etype: str, allowed_types: list):
     return attr
 
 
-def get_mesh_rels(poses, instance_idx, faces):
-    mesh_rels = []
-    for oi, (st, en) in enumerate(zip(instance_idx[:-1], instance_idx[1:])):
-        assert faces[oi].max() < en - st, "Face indices must be within object range."
-        mrels = faces[oi][:, [0, 1, 1, 0, 1, 2, 2, 1, 0, 2, 2, 0]].reshape(-1, 2) + st
-        mesh_rels.append(mrels)
-    mesh_rels = np.concatenate(mesh_rels, 0)
-    return mesh_rels
-
-
 class InvarNetGraph():
-    """A handler class for graph creation."""
+    """A handler class for graph creation.
+    
+    `prep_graph` is the main function that creates the graph.
+    """
     def __init__(self, data_config, assets=None) -> None:
         self.assets = assets
         self.particle_type = data_config['particle_type']
@@ -52,7 +39,7 @@ class InvarNetGraph():
         self.stage_allowed_types = ['leaf-leaf', 'leaf-root', 'root-root', 'root-leaf']
 
     def get_inter_object_rels(self, graph, seq_data):
-        # poses: OV x 3, instance_idx: O+1
+        """Add relations across objects in the scene."""
         assert len(graph['rels']) == 0, "Rels need to be empty in inter-object rels function."
         poses = seq_data['cur_poses']
         instance_idx = dcn(seq_data['instance_idx'])
@@ -77,7 +64,10 @@ class InvarNetGraph():
 
 
     def get_intra_object_rels(self, graph, seq_data):
-        # poses: OV x 3, vels: OV x 3, instance_idx: O+1
+        """Add relations within objects in the scene.
+        Here we add a root node for each object and connect it to the leaves points.
+        Helps to pass collision information instantly across the object.
+        """
 
         poses, coms, com_vels = seq_data['cur_poses'], seq_data['cur_coms'], seq_data['cur_com_vels']
         instance_idx = dcn(seq_data['instance_idx'])
@@ -132,7 +122,18 @@ class InvarNetGraph():
 
 
     def prep_graph(self, seq_data, noise_std=None):
-        """Make graph nodes and relations for the current frame."""
+        """Make graph nodes and relations for the current frame.
+        
+        This is the main function that prepares the graph.
+        It first adds particles to the scene if not already done. It then find relations between particles.
+        It also computes node features and relation features.
+        
+        Output is a dictionary with keys:
+            node_feats: V x d1
+            rels: R x 2
+            rel_feats: R x d2
+            stages: R. It denotes the order of processing for each relation.
+        """
 
         seq_data = self.add_particles(seq_data)  # add particles if not already done
         seq_data = get_particle_poses_and_vels_2(seq_data, noise_std=noise_std)  # 3 x OV x 3
@@ -161,40 +162,10 @@ class InvarNetGraph():
 
         return graph
 
-
-    def rt_variable_sampling(self, seq_data):
-        # if 'base_obj_points' not in seq_data:
-        #     old_particle_type = self.particle_type
-        #     self.particle_type = 'rt_same_spacing'
-        #     seq_data = self.add_particles(seq_data)
-        #     self.particle_type = old_particle_type
-        #     seq_data['base_obj_points'], seq_data['base_instance_idx'] = seq_data['obj_points'].copy(), seq_data['instance_idx'].copy()
-
-        # cur_transform = seq_data['cur_transform']
-        # if self.particle_type == 'rt_imp_sampling':
-        #     var_pts = get_imp_particles(seq_data['shape_label'], self.radius, self.assets, cur_transform, seq_data['scale'])
-        # elif self.particle_type == 'rt_surface_sampling':
-        #     # import IPython; IPython.embed()
-        #     var_pts = get_surface_particles(seq_data['shape_label'], self.radius, self.assets, cur_transform, seq_data['scale'])
-        # else: raise NotImplementedError
-
-        # new_obj_points, new_instance_idx = copy.deepcopy(seq_data['base_obj_points']), [0]
-        # for oi in range(len(var_pts)):
-        #     new_obj_points[oi] = np.concatenate([new_obj_points[oi], var_pts[oi]])
-        #     new_instance_idx.append(new_instance_idx[-1] + new_obj_points[oi].shape[0])
-        # seq_data['obj_points'] = new_obj_points
-        # seq_data['instance_idx'] = np.array(new_instance_idx)
-        return seq_data
-
     def add_particles(self, seq_data):
-        assert self.particle_type in ['rt_same_spacing', 'rt_imp_sampling']
+        """Add particles to the scene if not already done."""
+        assert self.particle_type in ['rt_same_spacing']
 
-        if self.particle_type in ['rt_imp_sampling']:
-            return self.rt_variable_sampling(seq_data)
-
-        # ----------------------
-        # rt_same_spacing
-        # ----------------------
         if 'obj_points' in seq_data:
             return seq_data
         scale = seq_data['scale']

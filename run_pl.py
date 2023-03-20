@@ -1,8 +1,6 @@
 import os
 import torch
 
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
 
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -11,7 +9,6 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.callbacks import TQDMProgressBar
 
 from utils.cpconfig import get_config
-from train.dpinet_module import DPINet_Module
 from train.invarnet_module import InvarNet_Module
 
 from utils.train_utils import MOViDataModule
@@ -19,7 +16,6 @@ from utils.train_utils import MOViDataModule
 
 def main():
     pl_modules = {
-        'dpinet': DPINet_Module,
         'invarnet': InvarNet_Module,
     }
 
@@ -27,8 +23,7 @@ def main():
     pl.seed_everything(62, workers=True)
 
     if cfg['data']['dataset_class'] != 'movi':
-        # datamodule = PhysionDynamicsDataModule(cfg)
-        pass
+        raise AttributeError
     else:
         datamodule = MOViDataModule(cfg)
     model = pl_modules[cfg['model']['model_name']](cfg)

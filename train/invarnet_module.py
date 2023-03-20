@@ -7,9 +7,6 @@ import scipy
 import cv2
 import copy
 
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
-
 from model.invarnet import InvarNet
 from utils.viz_utils import viz_points, dcn, put_text_on_img
 from utils.train_utils import recursive_to, get_angle_error, get_trans_error
@@ -27,6 +24,8 @@ class InvarNet_Module(pl.LightningModule):
 
         # Model
         self.model = InvarNet(self.model_config)
+        
+        # Input normalization
         if self.model_config['node_feat_dim'] == 6:
             self.register_buffer('nf_mean', torch.tensor([0, 0, 0, 0.1, 0, 0]).float()[None], persistent=False)
             self.register_buffer('nf_std', torch.tensor([0.15, 0.15, 0.15, 0.07, 1, 1]).float()[None], persistent=False)
@@ -53,23 +52,26 @@ class InvarNet_Module(pl.LightningModule):
     def on_train_start(self):
         if self.model_config['ckpt_path'] == '':
             return
-        print()
-        print("Changing learning rate of loaded checkpoint.")
-        # import IPython; IPython.embed()
+        print("\n Discarding learning rate of optimizer dict and using config learning rate.")
         for g in self.optimizer.param_groups:
             g['lr'] = self.train_config['lr']
 
     def forward(self, batch):
+        # Normalize node and rel feats
         graph = batch['graph']
         node_feats = (graph['node_feats'] - self.nf_mean) / self.nf_std
         rel_feats = (graph['rel_feats'] - self.rf_mean) / self.rf_std
+        
+        # Do a forward pass to predict vels. Compute poses from vels.
         out = self.model.forward(node_feats, graph['rels'], rel_feats, graph['stages'])
         pred_vels = out[:batch['instance_idx'][-1]]
         pred_poses = batch['cur_poses'] + pred_vels * batch['dt'].item()
         ret = {'pred_vels': pred_vels, 'pred_poses': pred_poses}
+        
+        # During inference, refine poses using shape matching
         if not self.training:
             pred_poses_refined, transform = shape_matching_objects(np.concatenate([dcn(o) for o in batch['obj_points']]), dcn(pred_poses), dcn(batch['instance_idx']))
-            ret.update({'transform': transform, 'pred_poses_refined': torch.from_numpy(pred_poses_refined).to(node_feats.device)})
+            ret.update({'pred_transform': transform, 'pred_poses_refined': torch.from_numpy(pred_poses_refined).to(node_feats.device)})
         return ret
 
     def get_equal_obj_weight_pts(self, instance_idx):
@@ -78,12 +80,12 @@ class InvarNet_Module(pl.LightningModule):
         return weight
 
     def compute_losses(self, batch, out, log_prefix=None):
-        # losses
+        # Compute all losses
         losses = {}
         vels_loss = (out['pred_vels'] - batch['next_vels']).square().mean(-1)
         losses['loss/vels'] = (vels_loss * self.get_equal_obj_weight_pts(batch['instance_idx'])).mean()
 
-        # Final loss and logging
+        # Aggregate losses and log
         losses['loss/total'] = sum(losses.values())
         num_pts = batch['cur_poses'].shape[0]
         if log_prefix:
@@ -103,16 +105,17 @@ class InvarNet_Module(pl.LightningModule):
         return losses['loss/total']
 
     def validation_step_rollout(self, batch, batch_idx, log_prefix=None, ret_viz=False):
+        """Do a sequence rollout, compute errors, and optionally render the result."""
         seq_data = batch
         graph_builder, num_frames = batch['graph_builder'], seq_data['time_step']
         pred_poses, _, seq_transforms, instance_idx = self.rollout(seq_data, num_frames, graph_builder)
 
-        ang_err = get_angle_error(dcn(seq_data['transform'][:, :3, :3]), seq_transforms[:, :3, :3])
-        trans_err = get_trans_error(dcn(seq_data['transform'][:, :3, 3]), seq_transforms[:, :3, 3])
+        ang_err = get_angle_error(dcn(seq_data['transform'][:, :, :3, :3]), seq_transforms[:, :, :3, :3])
+        trans_err = get_trans_error(dcn(seq_data['transform'][:, :, :3, 3]), seq_transforms[:, :, :3, 3])
 
         if log_prefix:
-            self.log(f'{log_prefix}/angle_error', ang_err, on_epoch=True, batch_size=num_frames)
-            self.log(f'{log_prefix}/trans_error', trans_err, on_epoch=True, batch_size=num_frames)
+            self.log(f'{log_prefix}/angle_error', ang_err, on_epoch=True, batch_size=1)
+            self.log(f'{log_prefix}/trans_error', trans_err, on_epoch=True, batch_size=1)
             self.log(f'{log_prefix}/loss/total', 0., on_epoch=True)  # dummy loss
 
         imgs = None
@@ -144,6 +147,7 @@ class InvarNet_Module(pl.LightningModule):
         return losses['loss/total']
 
     def visualize(self, batch, out, prefix):
+        """Visualize single frame predictions and ground truth."""
         graph = batch['graph']
         cur_poses = dcn(batch['cur_poses'])
         next_poses = dcn(batch['next_poses'])
@@ -168,7 +172,17 @@ class InvarNet_Module(pl.LightningModule):
 
 
     def rollout(self, seq_data, num_steps, graph_builder):
-        # seq_data should have prev_transform and cur_transform
+        """Primary inference function for a sequence rollout.
+        Args:
+            seq_data: dict of data for the sequence. It should have prev_transform and cur_transform.
+            num_steps: number of steps to rollout
+            graph_builder: graph builder object
+        Returns:
+            pred_poses: predicted points poses for each step
+            pred_vels: predicted points velocities for each step
+            seq_transforms: predicted transforms for each object at each step
+            seq_instance_idx: instance idx for each step
+        """
         
         device = seq_data['cur_transform'].device
         seq_data = recursive_to_numpy(seq_data)  # graph building requires things in numpy
@@ -195,11 +209,11 @@ class InvarNet_Module(pl.LightningModule):
             # print(out['pred_poses'].shape, out['pred_poses_refined'].shape)
             seq_poses.append(out['pred_poses_refined'])
             seq_vels.append(out['pred_vels'])
-            seq_transforms.append(out['transform'])
+            seq_transforms.append(out['pred_transform'])
 
             # prep for next frame
             seq_data['prev_transform'] = seq_data['cur_transform']
-            seq_data['cur_transform'] = out['transform']
+            seq_data['cur_transform'] = out['pred_transform']
             seq_data['graph'] = graph_builder.prep_graph(seq_data)
             seq_data = needed_things_to_gpu(seq_data)
 

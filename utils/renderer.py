@@ -1,3 +1,7 @@
+"""A pyrender-based helper for mesh or point cloud rendering.
+Inspired from: https://github.com/davrempe/humor/blob/main/humor/viz/mesh_viewer.py
+"""
+
 import os, time, math
 
 import numpy as np

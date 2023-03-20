@@ -4,11 +4,9 @@ import numpy as np
 import trimesh
 from tqdm import tqdm
 import xml.etree.ElementTree as ET
-import pickle as pkl
 from torch.utils.data import Dataset
 from scipy.spatial.transform.rotation import Rotation
 import h5py
-from functools import partial
 import cv2
 
 from dataset.particle_data_utils import careful_revoxelized, transform_points, get_transformation_matrix
@@ -122,6 +120,7 @@ def get_scale(shape_label, material_label, mass):
 
 
 def load_seq_data(data_path, skip_frame=None, randomize_skipping=False):
+    """Main data loading function for MOVi dataset. It loads data for one sequence."""
     assert skip_frame is None or skip_frame == 1, "MOVi shouldn't need skipping"
     with h5py.File(data_path, 'r') as h5:
         dct = {
@@ -169,27 +168,30 @@ class MOViDataset(Dataset):
     def __init__(self, data_config):
         super().__init__()
 
-        self.skip = data_config['skip']
-        self.subset = data_config['subset']
+        self.skip = data_config['skip']                                        # Downsampling fps factor
+        self.subset = data_config['subset']                                    # movi_a or movi_b
         assert self.subset in ['movi_a', 'movi_b']
-        self.split = data_config['split']
+        self.split = data_config['split']                                      # train or val
         assert self.split in ['train', 'val']
-        self.noise = 3.e-4 if data_config['split'] == 'train' else None
+        self.noise = 3.e-4 if data_config['split'] == 'train' else None        # Additive noise to the positions
         print("Adding noise: ", self.noise)
+        
+        # Load object assets (meshes, voxels, etc.) helpful for particle generation
         self.assets = get_assets(os.path.join(data_config['data_dir'], 'assets'))
 
+        # Load all the sequence paths
         data_dir = os.path.join(data_config['data_dir'], self.subset, {'train': 'train', 'val': 'validation'}[self.split])
         self.all_hdf5 = sorted([os.path.join(data_dir, x) for x in os.listdir(data_dir) if x.endswith('.hdf5')])
 
         self.graph_type = data_config['graph_type']
         self.particle_type = data_config['particle_type']
     
-        self.spacing = data_config['spacing'] # used for runtime particles
-        self.avg_frames_per_seq = 24 // self.skip
+        self.spacing = data_config['spacing']                                   # Particle spacing
+        self.avg_frames_per_seq = 24 // self.skip                               # Average number of frames per sequence
         print("Particle type: {} | Graph type: {} | Spacing: {:.4f}".format(self.particle_type, self.graph_type, self.spacing))
 
-        self.val_rollout = data_config['val_rollout']
-        self.graph_builder = InvarNetGraph(data_config, self.assets)
+        self.val_rollout = data_config['val_rollout']                           # Whether to do validation using rollout
+        self.graph_builder = InvarNetGraph(data_config, self.assets)            # Graph builder object
 
     def __len__(self):
         if self.split != 'train' and self.val_rollout:
@@ -203,7 +205,7 @@ class MOViDataset(Dataset):
         filename = self.all_hdf5[seq_idx]
         seq_data = load_seq_data(filename, skip_frame=self.skip, randomize_skipping=(fr_idxs == 'random3'))
         if fr_idxs == 'random3':
-            fidx = np.random.randint(0, seq_data['time_step']-3)  # exclude initial frames with external stimuli
+            fidx = np.random.randint(0, seq_data['time_step']-3)
         elif fr_idxs == 'all':
             fidx = 0
         seq_data['prev_transform'] = seq_data['transform'][fidx]

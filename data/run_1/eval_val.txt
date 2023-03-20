@@ -1,0 +1,24 @@
+
+
+
+2023-03-19 19:50:25.928507
+0 2 GT Acc: 1.000, GT Conf Mat: [1], Cur Acc: 1.000, Cur Conf Mat: [1], Angle Err: 0.740, Trans Err: 0.367 0
+1 2 GT Acc: 1.000, GT Conf Mat: [2], Cur Acc: 1.000, Cur Conf Mat: [2], Angle Err: 0.842, Trans Err: 0.562 1
+
+
+
+2023-03-19 20:43:27.803381
+0 2 GT Acc: 1.000, GT Conf Mat: [1], Cur Acc: 1.000, Cur Conf Mat: [1], Angle Err: 0.740, Trans Err: 0.367 0
+1 2 GT Acc: 1.000, GT Conf Mat: [2], Cur Acc: 1.000, Cur Conf Mat: [2], Angle Err: 0.842, Trans Err: 0.562 1
+
+
+
+2023-03-19 21:14:13.109013
+0 2 Angle Err: 0.740, Trans Err: 0.367 0
+1 2 Angle Err: 0.842, Trans Err: 0.562 1
+
+
+
+2023-03-19 21:17:46.599860
+0 2 Angle Err: 0.740, Trans Err: 0.367 0
+1 2 Angle Err: 0.842, Trans Err: 0.562 1

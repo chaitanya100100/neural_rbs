@@ -1,0 +1,6 @@
+
+
+
+2023-03-19 19:49:12.258671
+0 2 GT Acc: 1.000, GT Conf Mat: [1], Cur Acc: 1.000, Cur Conf Mat: [1], Angle Err: 0.856, Trans Err: 4.580 0
+1 2 GT Acc: 1.000, GT Conf Mat: [2], Cur Acc: 1.000, Cur Conf Mat: [2], Angle Err: 0.964, Trans Err: 3.720 1

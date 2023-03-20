@@ -1,60 +1,13 @@
-import os
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-import glob
 import pytorch_lightning as pl
-from tensorboard.backend.event_processing import event_accumulator
-import json
 import copy
-import scipy
 from scipy.spatial.transform.rotation import Rotation
-import warnings
 
 from dataset.movi_dataset import MOViDataset
-# from dataset.physion_particle_dataset import PhysionParticleDataset
-from dataset.data_utils import get_dynamics_seq_paths, get_readout_seq_paths, collate_fn, SCENARIOS
+from dataset.data_utils import collate_fn
 
-"""
-class PhysionDynamicsDataModule(pl.LightningDataModule):
-
-    def __init__(self, cfg):
-        super().__init__()
-        self.cfg = cfg
-
-    @staticmethod
-    def get_dynamics_dataset(data_config, split=None):
-
-        assert split in [None, 'train', 'val']
-        split_percentage = data_config['split_percentage'] if 'split_percentage' in data_config else None
-        if split is not None: assert split_percentage is not None
-
-        seq_paths = get_dynamics_seq_paths(data_config['physion_path'], data_config['protocol'], split, split_percentage)
-        data_config = copy.deepcopy(data_config)
-        data_config['split'] = split
-        ds = PhysionParticleDataset(seq_paths, data_config)
-        print(data_config['protocol'], split, "Dataset size", len(ds))
-        return ds
-
-    def setup(self, stage):
-        cfg = self.cfg
-
-        self.train_dataset = self.get_dynamics_dataset(cfg['data'], split='train')
-        self.val_dataset = self.get_dynamics_dataset(cfg['data'], split='val')
-
-        self.batch_size = cfg['train']['batch_size']
-        self.num_workers = 16
-        torch.multiprocessing.set_sharing_strategy('file_system')
-        import warnings; warnings.filterwarnings("ignore", ".*does not have many workers which may be a bottleneck. Consider increasing.*")
-
-    def train_dataloader(self):
-        train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, collate_fn=collate_fn, num_workers=self.num_workers, drop_last=True, shuffle=True, pin_memory=True)
-        return train_dataloader
-
-    def val_dataloader(self):
-        val_dataloader = DataLoader(self.val_dataset, batch_size=self.batch_size, collate_fn=collate_fn, num_workers=self.num_workers, drop_last=False, shuffle=False, pin_memory=True)
-        return val_dataloader
-"""
 
 class MOViDataModule(pl.LightningDataModule):
 
@@ -111,7 +64,14 @@ def recursive_to(x, target: torch.device):
 
 
 def get_angle_error(r1, r2):
-    # r1, r2: O x 4 or N x O x 4 or N x 3 x 3 or N x O x 3 x 3
+    """Compute the mean angle error in radians between two rotations.
+    
+    Args:
+        r1, r2: (O, 4) or (N, O, 4) if quaternion
+                (N, 3, 3) or (N, O, 3, 3) if rotmat
+    Returns:
+        a flot mean angle error in radians
+    """
     if r1.shape[-1] == 4:
         r1, r2 = r1.reshape([-1,4]), r2.reshape([-1,4])
         diff = Rotation.from_quat(r2).inv() * Rotation.from_quat(r1)
@@ -123,6 +83,7 @@ def get_angle_error(r1, r2):
     return diff.magnitude().mean()
 
 def get_trans_error(t1, t2):
+    """Mean L2 distance between two translations."""
     t1, t2 = t1.reshape([-1,3]), t2.reshape([-1,3])
     d = (t1 - t2) ** 2
     d = np.sqrt(d.sum(-1))
@@ -130,7 +91,7 @@ def get_trans_error(t1, t2):
 
 
 class StatsMeter(object):
-    """Computes and stores the average and current value"""
+    """Computes and stores helpful statistics."""
     def __init__(self):
         self.reset()
 

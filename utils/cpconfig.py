@@ -78,13 +78,6 @@ def get_config_general():
 
 
 # PROJECT specific stuff below
-def update_to_gcp_paths(cfg):
-    cfg['data']['physion_path'] = '/home/chpatel_stanford_edu/physion_dataset'
-    cfg['data']['saved_data_path'] = '/home/chpatel_stanford_edu/physion_dataset/saved_data'
-    if 'paths' in cfg:
-        cfg['paths']['root_log_path'] = '/mnt/disks/sdb/test/'
-    return cfg
-
 
 def get_config():
     parser = argparse.ArgumentParser()

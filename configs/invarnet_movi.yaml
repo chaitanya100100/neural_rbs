@@ -1,8 +1,10 @@
 exp_path: './data/test'
+# exp_path: ''
 seed: 62
 data:
   dataset_class: movi
   data_dir: ./data/kubric_data_dummy/
+  # data_dir: /ccn2/u/chpatel/kubric_data/
   subset: 'movi_a'
   skip: 1
   spacing: 0.1
@@ -24,7 +26,7 @@ train:
   accu_grad_batches: 2
   only_validate: False
 eval:
-  split: 'test'
+  split: 'val'
   viz: False
   outdir_prefix: 'viz'
 model:
@@ -33,6 +35,7 @@ model:
   node_feat_dim: 7
   rel_feat_dim: 8
   hidden_dim: 128
+  num_hiddens: 2
   mp_rel_idx: [0, 0, 0, 1, 2, 3, 0, 0, 0]
   num_mp_blocks: 1
   effect_normalization: none
