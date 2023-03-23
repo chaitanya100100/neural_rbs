@@ -1,4 +1,5 @@
 CS224W Project: Can GNNs learn rigid body dynamics?
+
 Chaitanya Patel, Preey Shah, Shreya Gupta
 
 # Run a demo inference
