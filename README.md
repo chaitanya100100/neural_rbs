@@ -1,8 +1,11 @@
+CS224W Project: Can GNNs learn rigid body dynamics?
+Chaitanya Patel, Preey Shah, Shreya Gupta
+
 # Run a demo inference
-python run_eval.py --config configs/invarnet_movi.yaml --exp_path ./data/run_1 --model-ckpt_path last_ckpt --eval-viz True
+`python run_eval.py --config configs/invarnet_movi.yaml --exp_path ./data/run_1 --model-ckpt_path last_ckpt --eval-viz True`
 
 # Training
-python run_pl_training.py --config configs/invarnet_movi.yaml --exp_path ./data/test
+`python run_pl_training.py --config configs/invarnet_movi.yaml --exp_path ./data/test`
 
 This will train on dummy dataset that comes with this repo. Edit config file to train according to your preferences.
 
