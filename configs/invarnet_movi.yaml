@@ -7,12 +7,12 @@ data:
   # data_dir: /ccn2/u/chpatel/kubric_data/
   subset: 'movi_a'
   skip: 1
-  spacing: 0.1
-  f1_radius: 0.6
+  spacing: 0.1  # spacing between particles
+  f1_radius: 0.6  # distance threshold for relations
   graph_type: invarnet
   particle_type: rt_same_spacing
   val_rollout: True
-  same_obj_rels: False
+  same_obj_rels: False  # whether to have relations between neighboring particles of the same object
 train:
   batch_size : 1
   viz_after: 5000
@@ -32,11 +32,11 @@ eval:
 model:
   model_name: invarnet
   ckpt_path: ''
-  node_feat_dim: 7
-  rel_feat_dim: 8
+  node_feat_dim: 7  # [3 for velocity, 1 for distance to floor, 3 for node-type]
+  rel_feat_dim: 8  # [3 for end-point node displacement, 1 for its magnitude, 4 for rel-type]
   hidden_dim: 128
   num_hiddens: 2
-  mp_rel_idx: [0, 0, 0, 1, 2, 3, 0, 0, 0]
+  mp_rel_idx: [0, 0, 0, 1, 2, 3, 0, 0, 0]  # 3-3 message passing at leaf level, rest 1
   num_mp_blocks: 1
   effect_normalization: none
   inp_normalization: none

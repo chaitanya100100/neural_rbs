@@ -102,3 +102,27 @@
 2023-03-19 22:15:04.947035
 0 2 Angle Err: 0.740, Trans Err: 0.367 0
 1 2 Angle Err: 0.842, Trans Err: 0.562 1
+
+
+
+2023-03-19 22:20:27.415671
+0 2 Angle Err: 0.740, Trans Err: 0.367 0
+1 2 Angle Err: 0.842, Trans Err: 0.562 1
+
+
+
+2023-03-21 17:47:00.986020
+0 2 Angle Err: 0.740, Trans Err: 0.367 0
+1 2 Angle Err: 0.842, Trans Err: 0.562 1
+
+
+
+2023-03-21 17:58:26.987173
+0 2 Angle Err: 0.740, Trans Err: 0.367 0
+1 2 Angle Err: 0.842, Trans Err: 0.562 1
+
+
+
+2023-03-22 22:24:36.029050
+0 2 Angle Err: 0.740, Trans Err: 0.367 0
+1 2 Angle Err: 0.842, Trans Err: 0.562 1

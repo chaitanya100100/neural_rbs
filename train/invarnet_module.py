@@ -108,8 +108,10 @@ class InvarNet_Module(pl.LightningModule):
         """Do a sequence rollout, compute errors, and optionally render the result."""
         seq_data = batch
         graph_builder, num_frames = batch['graph_builder'], seq_data['time_step']
+        # Rollout
         pred_poses, _, seq_transforms, instance_idx = self.rollout(seq_data, num_frames, graph_builder)
 
+        # Compute errors
         ang_err = get_angle_error(dcn(seq_data['transform'][:, :, :3, :3]), seq_transforms[:, :, :3, :3])
         trans_err = get_trans_error(dcn(seq_data['transform'][:, :, :3, 3]), seq_transforms[:, :, :3, 3])
 
@@ -119,13 +121,14 @@ class InvarNet_Module(pl.LightningModule):
             self.log(f'{log_prefix}/loss/total', 0., on_epoch=True)  # dummy loss
 
         imgs = None
+        # Visualize results
         if (log_prefix and batch_idx == 0) or ret_viz:
             gt_poses = transform_points(np.concatenate([dcn(op) for op in seq_data['obj_points']]), 
                                         dcn(seq_data['transform']), instance_idx=dcn(seq_data['instance_idx']))
             pred_poses = [dcn(pp) for pp in pred_poses] if isinstance(pred_poses, list) else dcn(pred_poses)
             cam_pos = dcn(seq_data['cam_pos'])
-            gt_imgs = viz_points(gt_poses, seq_data['instance_idx'], cam_pos=cam_pos, add_axis=True, img_size=256)
-            pred_imgs = viz_points(pred_poses, instance_idx, cam_pos=cam_pos, add_axis=True, img_size=256)
+            gt_imgs = viz_points(gt_poses, seq_data['instance_idx'], cam_pos=cam_pos, add_axis=True, img_size=512, add_floor=True)
+            pred_imgs = viz_points(pred_poses, instance_idx, cam_pos=cam_pos, add_axis=True, img_size=512, add_floor=True)
             imgs = [gt_imgs, pred_imgs]
             if 'imgs' in seq_data:
                 rgb = np.stack([cv2.resize(x, gt_imgs.shape[-3:-1]) for x in dcn(seq_data['imgs'])], 0)
